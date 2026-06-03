@@ -233,9 +233,9 @@ pub fn to_admin_post_dto(post: Post) -> AdminPostDTO {
             Some(d) => Some(d.to_chrono()),
             None => None,
         },
-        updated_at: post.updated_at.to_chrono(),
-        created_at: post.created_at.to_chrono(),
-        author_id: post.author_id.to_string(),
+        updated_at: Some(post.updated_at.to_chrono()),
+        created_at: Some(post.created_at.to_chrono()),
+        author_id: Some(post.author_id.to_string()),
         image: post.image,
         content: ContentDTO {
             ja: post.content.ja,

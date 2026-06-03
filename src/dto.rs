@@ -83,9 +83,9 @@ pub struct AdminPostDTO {
     pub category: CategoryDTO, // 記事のカテゴリ。カテゴリ名やスラッグを保持
     pub tags: Option<Vec<TagDTO>>, // 記事に関連するタグのリスト。タグは複数付けられる
     pub published_at: Option<DateTime<Utc>>, // 記事の公開日時。UTC形式で保存
-    pub updated_at: DateTime<Utc>, // 記事の最終更新日時。UTC形式で保存
-    pub created_at: DateTime<Utc>, // 記事の最終更新日時。UTC形式で保存
-    pub author_id: String,  // 記事の著者
+    pub updated_at: Option<DateTime<Utc>>, // 記事の最終更新日時。UTC形式で保存
+    pub created_at: Option<DateTime<Utc>>, // 記事の最終更新日時。UTC形式で保存
+    pub author_id: Option<String>, // 記事の著者
     pub image: Option<String>, // アイキャッチ画像URL
     pub content: ContentDTO, // 記事の内容
 }

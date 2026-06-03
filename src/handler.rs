@@ -333,7 +333,7 @@ pub struct Params {
 
 // 記事更新
 pub async fn update_post(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(slug): Path<String>,
     Json(post_dto): Json<AdminPostDTO>,
@@ -345,7 +345,7 @@ pub async fn update_post(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    let author_id = match ObjectId::parse_str(&post_dto.author_id) {
+    let author_id = match ObjectId::parse_str(claims.sub) {
         Ok(id) => id,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
