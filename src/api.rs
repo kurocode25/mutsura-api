@@ -59,6 +59,7 @@ pub fn create_router(db: Arc<dyn Repository + Send + Sync>) -> Router {
         .route("/login", post(login)) // ログイン処理
         .route("/logout", post(logout)) // ログイン処理
         .route("/refresh", post(refresh)) // リフレッシュ処理
+        .route("/admin/post", get(get_admin_posts)) // 管理画面用 記事詳細取得
         .route("/admin/post/{slug}", get(get_admin_post_detail)) // 管理画面用 記事詳細取得
         .route("/admin/page/{slug}", get(get_admin_page_detail)) // 管理画面用のページ詳細を取得
         .route("/admin/tag", get(get_tag_list)) // 管理画面用のタグリストを取得
