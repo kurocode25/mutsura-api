@@ -2,6 +2,7 @@ use crate::auth::Claims;
 use crate::dto::*;
 use crate::mapper::*;
 use crate::model::*;
+use crate::utils::deserialize_option_i64_from_str;
 use crate::{api::AppState, auth::check_refresh_token};
 use axum::{
     body::Body,
@@ -258,8 +259,10 @@ struct CommonPostListQueryParams {
     category: Option<String>, // カテゴリ
     tag: Option<String>,      // タグ
     lang: Option<String>,     // 言語
-    limit: Option<i64>,       // 取得件数
-    page: Option<i64>,        // ページ
+    #[serde(default, deserialize_with = "deserialize_option_i64_from_str")]
+    limit: Option<i64>, // 取得件数
+    #[serde(default, deserialize_with = "deserialize_option_i64_from_str")]
+    page: Option<i64>, // ページ
     sort: Option<String>,     // ソート
     q: Option<String>,        // 検索クエリ
 }
