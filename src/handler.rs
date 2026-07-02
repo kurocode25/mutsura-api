@@ -2,16 +2,16 @@ use crate::auth::Claims;
 use crate::dto::*;
 use crate::mapper::*;
 use crate::model::*;
+use crate::utils::deserialize_option_i64_from_str;
 use crate::{api::AppState, auth::check_refresh_token};
 use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use axum_extra::extract::cookie::CookieJar;
-use http::Response;
 use mongodb::bson::DateTime;
 use mongodb::bson::{doc, oid::ObjectId, Document};
 use password_auth::{generate_hash, verify_password};
@@ -163,7 +163,7 @@ pub async fn get_posts(
     State(state): State<AppState>,
     Query(params): Query<PostListQueryParams>,
 ) -> impl IntoResponse {
-    let lang = match params.lang {
+    let lang = match params.common.lang {
         //{{{
         Some(ref l) => match l.as_str() {
             "ja" => Lang::Ja,
@@ -172,33 +172,19 @@ pub async fn get_posts(
         },
         None => Lang::Ja,
     };
-    let limit = params.limit.unwrap_or(10); // 1ページあたりのデータ数
-    let page = params.page.unwrap_or(1); // ページ番号
-    match state.db.find_posts(create_pipeline(&params)).await {
-        Ok(pwt) => {
-            // PostWithTotalを取得
-            let posts = pwt.data;
-            let total = if let Some(t) = pwt.total.get(0) {
-                t.count
-            } else {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            };
-
-            let pagination: PaginationDTO = PaginationDTO::new(total, limit, page);
-            let post_lists: Vec<PostListDTO> = posts
-                .into_iter()
-                .map(|post| to_post_list_dto(post, &lang))
-                .collect();
-
-            (
-                StatusCode::OK,
-                Json(PostListResponseDTO {
-                    posts: post_lists,
-                    pagination,
-                }),
-            )
-                .into_response()
-        }
+    let limit = params.common.limit.unwrap_or(10); // 1ページあたりのデータ数
+    let page = params.common.page.unwrap_or(1); // ページ番号
+    let filter = create_public_postlist_filter(
+        &params.common.category,
+        &params.common.tag,
+        &params.common.lang,
+    );
+    match state
+        .db
+        .find_posts(create_pipeline(&params.common, &filter))
+        .await
+    {
+        Ok(pwt) => common_get_posts_response(pwt, limit, page, &lang),
         Err(e) => {
             println!("error: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -206,21 +192,167 @@ pub async fn get_posts(
     } //}}}
 }
 
-// 記事一覧データを取得時のクエリパラメータ
+// 管理用のポスト取得API
+pub async fn get_admin_posts(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Query(params): Query<AdminPostListQueryParams>,
+) -> impl IntoResponse {
+    let lang = match params.common.lang {
+        //{{{
+        Some(ref l) => match l.as_str() {
+            "ja" => Lang::Ja,
+            "en" => Lang::En,
+            _ => return StatusCode::BAD_REQUEST.into_response(),
+        },
+        None => Lang::Ja,
+    };
+    let limit = params.common.limit.unwrap_or(10); // 1ページあたりのデータ数
+    let page = params.common.page.unwrap_or(1); // ページ番号
+    let filter = create_admin_postlist_filter(
+        &params.common.category,
+        &params.common.tag,
+        &params.common.lang,
+        &params.status,
+    );
+    match state
+        .db
+        .find_posts(create_pipeline(&params.common, &filter))
+        .await
+    {
+        Ok(pwt) => common_get_posts_response(pwt, limit, page, &lang),
+        Err(e) => {
+            println!("error: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    } //}}}
+}
+
+// 公開用、管理用共通の記事一覧データ取得処理
+fn common_get_posts_response(pwt: PostWithTotal, limit: i64, page: i64, lang: &Lang) -> Response {
+    let posts = pwt.data;
+    let total = if let Some(t) = pwt.total.get(0) {
+        t.count
+    } else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+
+    let pagination: PaginationDTO = PaginationDTO::new(total, limit, page);
+    let post_lists: Vec<PostListDTO> = posts
+        .into_iter()
+        .map(|post| to_post_list_dto(post, lang))
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(PostListResponseDTO {
+            posts: post_lists,
+            pagination,
+        }),
+    )
+        .into_response()
+}
+
+// 記事一覧取得の共通パラメータ
 #[derive(Deserialize)]
-pub struct PostListQueryParams {
+struct CommonPostListQueryParams {
     category: Option<String>, // カテゴリ
     tag: Option<String>,      // タグ
     lang: Option<String>,     // 言語
-    is_draft: Option<bool>,   // 下書き
-    limit: Option<i64>,       // 取得件数
-    page: Option<i64>,        // ページ
+    #[serde(default, deserialize_with = "deserialize_option_i64_from_str")]
+    limit: Option<i64>, // 取得件数
+    #[serde(default, deserialize_with = "deserialize_option_i64_from_str")]
+    page: Option<i64>, // ページ
     sort: Option<String>,     // ソート
     q: Option<String>,        // 検索クエリ
 }
 
+// 記事一覧データを取得時のクエリパラメータ
+#[derive(Deserialize)]
+pub struct PostListQueryParams {
+    #[serde(flatten)]
+    common: CommonPostListQueryParams,
+}
+
+// 記事のステータス
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PostStatus {
+    Draft,
+    Published,
+}
+
+// 管理者用の記事取得クエリパラメータ
+#[derive(Deserialize)]
+pub struct AdminPostListQueryParams {
+    #[serde(flatten)]
+    common: CommonPostListQueryParams,
+    status: Option<PostStatus>,
+}
+
+fn create_common_postlist_filter(
+    category: &Option<String>,
+    tag: &Option<String>,
+    lang: &Option<String>,
+) -> Document {
+    // filterを作成
+    let mut filter = doc! {};
+    // カテゴリ指定がある場合はクエリに追加
+    if let Some(category) = &category {
+        filter.insert("category.slug", category);
+    }
+    // タグ指定がある場合はクエリに追加
+    if let Some(tag) = &tag {
+        filter.insert("tags.slug", tag);
+    }
+
+    // 言語に英語が指定された場合は`has_english=true`のみを返す
+    if let Some(ref l) = lang {
+        if l == "en" {
+            filter.insert("has_english", true);
+        };
+    };
+
+    filter
+}
+// 公開用フィルター作成
+fn create_public_postlist_filter(
+    category: &Option<String>,
+    tag: &Option<String>,
+    lang: &Option<String>,
+) -> Document {
+    let mut filter = create_common_postlist_filter(category, tag, lang);
+    // ドラフトは非表示
+    filter.insert("is_draft", false);
+
+    filter
+}
+// 管理者用フィルター作成
+fn create_admin_postlist_filter(
+    category: &Option<String>,
+    tag: &Option<String>,
+    lang: &Option<String>,
+    status: &Option<PostStatus>, // draft, publish
+) -> Document {
+    let mut filter = create_common_postlist_filter(category, tag, lang);
+
+    // statusに応じたfilterの処理
+    if let Some(st) = status {
+        match st {
+            PostStatus::Draft => {
+                filter.insert("is_draft", true);
+            }
+            PostStatus::Published => {
+                filter.insert("is_draft", false);
+            }
+        }
+    }
+
+    filter
+}
+
 // 記事一覧取得のためのパイプラインを生成
-fn create_pipeline(params: &PostListQueryParams) -> Vec<Document> {
+fn create_pipeline(params: &CommonPostListQueryParams, filter: &Document) -> Vec<Document> {
     let limit = params.limit.unwrap_or(10); //{{{
     let page = params.page.unwrap_or(1);
     let skip: i64 = (page - 1) * limit;
@@ -233,28 +365,8 @@ fn create_pipeline(params: &PostListQueryParams) -> Vec<Document> {
         _ => 1,
     };
 
-    // filterを作成
-    let mut filter = doc! {};
-    // カテゴリ指定がある場合はクエリに追加
-    if let Some(category) = &params.category {
-        filter.insert("category.slug", category);
-    }
-    // タグ指定がある場合はクエリに追加
-    if let Some(tag) = &params.tag {
-        filter.insert("tags.slug", tag);
-    }
-    // 下書き指定がある場合はクエリに追加
-    if let Some(is_draft) = params.is_draft {
-        filter.insert("is_draft", is_draft);
-    }
-    // 言語に英語が指定された場合は`has_english=true`のみを返す
-    if let Some(ref l) = params.lang {
-        if l == "en" {
-            filter.insert("has_english", true);
-        };
-    };
-
     let mut pipeline: Vec<Document> = Vec::new();
+    //}}}
 
     // パイプラインを作成
     // 検索クエリがある場合はクエリに追加
@@ -267,7 +379,7 @@ fn create_pipeline(params: &PostListQueryParams) -> Vec<Document> {
     pipeline.push(doc! {
         "$facet" : {
             "data" : [
-                doc! { "$match" : filter.clone()},
+                doc! { "$match" : filter},
                 doc! { "$sort" : {sort_key : sort_value}},
                 doc! { "$skip" : skip},
                 doc! { "$limit" : limit},
@@ -279,7 +391,7 @@ fn create_pipeline(params: &PostListQueryParams) -> Vec<Document> {
         }
     });
 
-    pipeline //}}}
+    pipeline
 }
 
 // 記事詳細取得（slug指定）
@@ -1013,5 +1125,38 @@ pub async fn get_admin_page_detail(
         Ok(Some(page)) => (StatusCode::OK, Json(to_admin_page_detail_dto(page))).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::Bson;
+
+    #[test]
+    fn create_public_postlist_filter_excludes_drafts() {
+        let filter = create_public_postlist_filter(&None, &None, &None);
+        assert_eq!(filter.get("is_draft"), Some(&Bson::Boolean(false)));
+    }
+
+    #[test]
+    fn create_admin_postlist_filter_with_status_draft() {
+        let status = Some(PostStatus::Draft);
+        let filter = create_admin_postlist_filter(&None, &None, &None, &status);
+        assert_eq!(filter.get("is_draft"), Some(&Bson::Boolean(true)));
+    }
+
+    #[test]
+    fn create_admin_postlist_filter_with_status_published() {
+        let status = Some(PostStatus::Published);
+        let filter = create_admin_postlist_filter(&None, &None, &None, &status);
+        assert_eq!(filter.get("is_draft"), Some(&Bson::Boolean(false)));
+    }
+
+    #[test]
+    fn create_common_postlist_filter_sets_has_english_for_en() {
+        let lang = Some("en".to_string());
+        let filter = create_common_postlist_filter(&None, &None, &lang);
+        assert_eq!(filter.get("has_english"), Some(&Bson::Boolean(true)));
     }
 }
