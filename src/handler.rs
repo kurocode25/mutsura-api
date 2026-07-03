@@ -370,10 +370,21 @@ fn create_pipeline(params: &CommonPostListQueryParams, filter: &Document) -> Vec
 
     // パイプラインを作成
     // 検索クエリがある場合はクエリに追加
-    // Note: MongoDBの仕様で`$text`は`$facet`と共に使えない。
     if let Some(q) = &params.q {
-        // filter.insert("$text", doc! { "$search": q });
-        pipeline.push(doc! {"$match" : {"$text" : { "$search": q }}});
+        let regex_val = mongodb::bson::Regex {
+            pattern: q.clone(),
+            options: "i".to_string(),
+        };
+        pipeline.push(doc! {
+            "$match": {
+                "$or": [
+                    { "title.ja": { "$regex": &regex_val } },
+                    { "title.en": { "$regex": &regex_val } },
+                    { "content.ja": { "$regex": &regex_val } },
+                    { "content.en": { "$regex": &regex_val } }
+                ]
+            }
+        });
     }
 
     pipeline.push(doc! {
